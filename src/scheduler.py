@@ -27,10 +27,7 @@ async def job_discover_daily() -> None:
         from src.discover.orchestrator import DiscoverOrchestrator
 
         orchestrator = DiscoverOrchestrator()
-        # TODO: Load top keywords from database
-        keywords: list[dict] = []
-        opportunities = await orchestrator.run_daily(keywords)
-        # TODO: Store results in database
+        opportunities = await orchestrator.run_daily()
         await orchestrator.close()
         logger.info("job_complete", job="discover_daily", opportunities=len(opportunities))
     except Exception as e:
@@ -44,12 +41,16 @@ async def job_discover_weekly() -> None:
         from src.discover.orchestrator import DiscoverOrchestrator
 
         orchestrator = DiscoverOrchestrator()
-        # TODO: Load seed keywords from database
-        seed_keywords: list[str] = []
-        new_keywords = await orchestrator.run_weekly_expansion(seed_keywords)
-        # TODO: Store new keywords and run full scoring
+        new_keywords = await orchestrator.run_weekly_expansion()
+        # Run a full scoring pass on all keywords after expansion
+        opportunities = await orchestrator.run_daily()
         await orchestrator.close()
-        logger.info("job_complete", job="discover_weekly", new_keywords=len(new_keywords))
+        logger.info(
+            "job_complete",
+            job="discover_weekly",
+            new_keywords=len(new_keywords),
+            opportunities=len(opportunities),
+        )
     except Exception as e:
         logger.error("job_failed", job="discover_weekly", error=str(e))
 

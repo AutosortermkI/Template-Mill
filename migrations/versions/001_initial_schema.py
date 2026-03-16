@@ -87,6 +87,7 @@ def upgrade() -> None:
             sa.Integer,
             sa.ForeignKey("keywords.id", ondelete="CASCADE"),
             nullable=False,
+            unique=True,
         ),
         sa.Column("niche_label", sa.String(255), nullable=False),
         sa.Column(
