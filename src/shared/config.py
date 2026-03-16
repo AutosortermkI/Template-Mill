@@ -7,9 +7,9 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "postgresql://user:pass@localhost:5432/templatemill"
 
-    # Azure
-    AZURE_STORAGE_CONNECTION: str = ""
-    AZURE_STORAGE_CONTAINER: str = "templatemill"
+    # Local Storage (for generated assets, mockups, exports)
+    STORAGE_DIR: str = "./storage"
+    STORAGE_CONTAINER: str = "templatemill"
 
     # API Keys
     ANTHROPIC_API_KEY: str = ""

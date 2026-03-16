@@ -1,35 +1,51 @@
 # Deployment Guide
 
-## Azure Functions Deployment
+## Scheduler (Scheduled Jobs)
 
-### Prerequisites
-- Azure CLI installed and authenticated
-- Azure Functions Core Tools v4
-- Python 3.12+
+All pipeline jobs run via APScheduler in a single Python process. No cloud functions required.
 
-### Setup
+### Running the Scheduler
 ```bash
-# Create resource group
-az group create --name templatemill-rg --location eastus
+# Start the scheduler (runs jobs on cron schedule)
+python -m src.scheduler
 
-# Create storage account
-az storage account create --name templatemillstorage --location eastus --resource-group templatemill-rg
-
-# Create function app
-az functionapp create --resource-group templatemill-rg --consumption-plan-location eastus \
-  --runtime python --runtime-version 3.12 --functions-version 4 \
-  --name templatemill-functions --storage-account templatemillstorage
-
-# Deploy
-func azure functionapp publish templatemill-functions
+# Run all jobs once immediately (for testing or manual trigger)
+python -m src.scheduler --once
 ```
 
-### Environment Variables
-Set all required environment variables in Azure Function App Settings:
+### Schedule Overview
+| Job                | Schedule             | Description                        |
+|--------------------|----------------------|------------------------------------|
+| discover_daily     | Daily at 06:00 UTC   | Etsy + Google Trends demand scan   |
+| competitor_monitor | Daily at 07:00 UTC   | Competitor shop tracking           |
+| analytics_collect  | Daily at 08:00 UTC   | Sales data collection              |
+| discover_weekly    | Sunday at 02:00 UTC  | Full keyword expansion + scoring   |
+| weekly_digest      | Monday at 09:00 UTC  | Weekly performance report          |
+
+### Running as a Service
+For production, run the scheduler as a systemd service or Docker container:
+
 ```bash
-az functionapp config appsettings set --name templatemill-functions \
-  --resource-group templatemill-rg \
-  --settings DATABASE_URL="..." ANTHROPIC_API_KEY="..." ETSY_API_KEY="..."
+# systemd example (create /etc/systemd/system/templatemill-scheduler.service)
+[Unit]
+Description=TemplateMill Pipeline Scheduler
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=templatemill
+WorkingDirectory=/opt/templatemill
+ExecStart=/opt/templatemill/.venv/bin/python -m src.scheduler
+Restart=always
+EnvironmentFile=/opt/templatemill/.env
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+# Or with Docker
+docker run -d --env-file .env --name templatemill-scheduler templatemill python -m src.scheduler
 ```
 
 ## Database Setup
@@ -42,4 +58,11 @@ python scripts/seed_keywords.py
 ```
 
 ## Dashboard Deployment
-The Flask dashboard can be deployed to Azure App Service or any WSGI-compatible host.
+The Flask dashboard can be deployed to any WSGI-compatible host:
+```bash
+# Development
+flask --app src.dashboard.app run --debug
+
+# Production (gunicorn)
+gunicorn 'src.dashboard.app:create_app()' --bind 0.0.0.0:8000
+```
