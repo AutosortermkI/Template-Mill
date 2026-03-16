@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Environment variables
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Playwright
+playwright-report/
+
+# VCR cassettes (keep tracked but ignore large recordings)
+tests/cassettes/*.yaml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Azure Functions
+local.settings.json
+.python_packages/
+
+# Alembic
+migrations/versions/__pycache__/
