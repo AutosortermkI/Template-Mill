@@ -41,6 +41,8 @@ SEED_KEYWORDS = [
 
 def main() -> None:
     """Insert seed keywords into the database."""
+    from sqlalchemy import text
+
     from src.shared.database import get_session
     from src.shared.logger import get_logger, setup_logging
 
@@ -52,11 +54,13 @@ def main() -> None:
     try:
         for kw in SEED_KEYWORDS:
             session.execute(
-                """
-                INSERT INTO keywords (term, category, subcategory, is_seed, discovered_from)
-                VALUES (:term, :category, :subcategory, TRUE, 'manual')
-                ON CONFLICT (term) DO NOTHING
-                """,
+                text(
+                    """
+                    INSERT INTO keywords (term, category, subcategory, is_seed, discovered_from)
+                    VALUES (:term, :category, :subcategory, TRUE, 'manual')
+                    ON CONFLICT (term) DO NOTHING
+                    """
+                ),
                 kw,
             )
 
