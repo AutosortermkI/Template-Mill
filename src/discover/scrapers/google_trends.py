@@ -24,10 +24,43 @@ def _chunk(lst: list, size: int) -> list[list]:
 
 
 class GoogleTrendsScraper:
-    """Wrapper around pytrends with rate limiting and structured output."""
+    """Wrapper around pytrends with rate limiting and structured output.
+
+    When batch requests return empty data, retries keywords individually.
+    Raises clear errors instead of silently returning zeros.
+    """
 
     def __init__(self) -> None:
-        self.pytrends = TrendReq(hl="en-US", tz=300, retries=3, backoff_factor=2)
+        try:
+            self.pytrends = TrendReq(hl="en-US", tz=300, retries=3, backoff_factor=2)
+        except Exception as e:
+            logger.error("google_trends_init_failed", error=str(e))
+            raise ConnectionError(
+                f"Could not connect to Google Trends: {e}\n"
+                "This usually means Google is blocking your requests.\n"
+                "Try: using a VPN, waiting a few minutes, or running with --etsy-only"
+            ) from e
+
+    def _extract_trend_data(self, df, keyword: str) -> TrendData | None:
+        """Extract momentum and interest from a DataFrame for a keyword."""
+        if df.empty or keyword not in df.columns:
+            return None
+        recent = df[keyword].tail(4).mean()
+        overall = df[keyword].mean()
+        return TrendData(
+            momentum=round(recent / max(overall, 1), 2),
+            interest=round(overall),
+        )
+
+    async def _fetch_single(self, keyword: str, geo: str) -> TrendData | None:
+        """Fetch trend data for a single keyword (fallback for failed batches)."""
+        try:
+            self.pytrends.build_payload([keyword], timeframe="today 12-m", geo=geo)
+            df = self.pytrends.interest_over_time()
+            return self._extract_trend_data(df, keyword)
+        except Exception as e:
+            logger.warning("google_trends_single_failed", keyword=keyword, error=str(e))
+            return None
 
     async def get_momentum(self, keywords: list[str], geo: str = "US") -> dict[str, TrendData]:
         """Calculate trend momentum and interest level for each keyword.
@@ -39,6 +72,8 @@ class GoogleTrendsScraper:
         Note: Interest values are normalized within each batch of 5 keywords,
         so they are most meaningful for relative comparison within a batch.
 
+        When a batch returns empty data, retries each keyword individually.
+
         Args:
             keywords: List of keywords to analyze (batched in groups of 5).
             geo: Geographic region code.
@@ -47,31 +82,33 @@ class GoogleTrendsScraper:
             Dict mapping keyword to TrendData with momentum and interest.
         """
         results: dict[str, TrendData] = {}
+        failed_keywords: list[str] = []
 
-        for batch in _chunk(keywords, 5):
+        for batch_num, batch in enumerate(_chunk(keywords, 5)):
             try:
                 logger.info("google_trends_batch", keywords=batch, geo=geo)
                 self.pytrends.build_payload(batch, timeframe="today 12-m", geo=geo)
                 df = self.pytrends.interest_over_time()
 
                 if df.empty:
-                    logger.warning("google_trends_empty_response", batch=batch)
+                    logger.warning(
+                        "google_trends_empty_response",
+                        batch=batch,
+                        msg="Google returned no data for this batch",
+                    )
+                    failed_keywords.extend(batch)
+                else:
+                    batch_got_data = False
                     for kw in batch:
-                        results[kw] = TrendData(momentum=0.0, interest=0)
-                    continue
+                        td = self._extract_trend_data(df, kw)
+                        if td is not None:
+                            results[kw] = td
+                            batch_got_data = True
+                        else:
+                            failed_keywords.append(kw)
 
-                for kw in batch:
-                    if kw in df.columns:
-                        recent = df[kw].tail(4).mean()
-                        overall = df[kw].mean()
-                        results[kw] = TrendData(
-                            momentum=round(recent / max(overall, 1), 2),
-                            interest=round(overall),
-                        )
-                    else:
-                        results[kw] = TrendData(momentum=0.0, interest=0)
-
-                logger.info("google_trends_batch_complete", results_count=len(batch))
+                    if batch_got_data:
+                        logger.info("google_trends_batch_complete", results_count=len(batch))
 
             except Exception as e:
                 error_msg = str(e).lower()
@@ -79,11 +116,27 @@ class GoogleTrendsScraper:
                     logger.warning("google_trends_rate_limited", batch=batch)
                     raise RateLimitError(f"Google Trends rate limit hit: {e}") from e
                 logger.error("google_trends_error", batch=batch, error=str(e))
-                for kw in batch:
-                    results[kw] = TrendData(momentum=0.0, interest=0)
+                failed_keywords.extend(batch)
 
             # Rate limit: 10 second delay between batches
-            await asyncio.sleep(10)
+            if batch_num < len(_chunk(keywords, 5)) - 1:
+                await asyncio.sleep(10)
+
+        # Retry failed keywords individually (Google sometimes rejects batches
+        # but accepts individual queries)
+        if failed_keywords:
+            logger.info(
+                "google_trends_retry_individual",
+                count=len(failed_keywords),
+                msg="Retrying failed keywords individually",
+            )
+            for kw in failed_keywords:
+                await asyncio.sleep(3)  # Shorter delay for individual requests
+                td = await self._fetch_single(kw, geo)
+                if td is not None:
+                    results[kw] = td
+                else:
+                    results[kw] = TrendData(momentum=0.0, interest=0)
 
         return results
 

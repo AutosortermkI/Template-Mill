@@ -88,14 +88,23 @@ async def fetch_trends(keywords: list[dict]) -> dict[str, TrendData]:
     print(f"  Fetching Google Trends for {len(terms)} keywords (batches of 5, ~10s between)...")
     try:
         scraper = GoogleTrendsScraper()
+    except ConnectionError as e:
+        print(f"\n  ERROR: {e}\n")
+        return {kw["term"]: _EMPTY_TREND for kw in keywords}
+
+    try:
         trend_data = await scraper.get_momentum(terms)
 
-        # Check if we got any real data
-        has_real_data = any(td["interest"] > 0 or td["momentum"] > 0 for td in trend_data.values())
-        if not has_real_data:
+        # Report what we got
+        got_data = sum(1 for td in trend_data.values() if td["interest"] > 0)
+        got_momentum = sum(1 for td in trend_data.values() if td["momentum"] > 0)
+        print(f"  Got interest data for {got_data}/{len(terms)} keywords, "
+              f"momentum for {got_momentum}/{len(terms)}")
+
+        if got_data == 0:
             print("\n  WARNING: Google Trends returned no usable data for any keyword.")
-            print("  This usually means pytrends is being rate-limited or blocked.")
-            print("  Try again in a few minutes, or use a VPN.\n")
+            print("  This usually means Google is rate-limiting or blocking pytrends.")
+            print("  Try: waiting a few minutes, using a VPN, or adding ETSY_API_KEY to .env\n")
 
         return trend_data
     except Exception as e:
@@ -247,10 +256,20 @@ async def main() -> None:
 
     # Check if results are meaningful
     scores = [r["score"] for r in rows]
-    if len(set(scores)) == 1:
-        print("\n  WARNING: All keywords scored identically — no data source returned")
-        print("  usable data. Results below are not actionable.\n")
-        print("  To fix: add ETSY_API_KEY to .env, or retry Google Trends later.\n")
+    if len(set(scores)) <= 1:
+        print("\n" + "=" * 72)
+        print("  NO ACTIONABLE DATA — all keywords scored identically.")
+        print("  Neither Google Trends nor Etsy returned usable data.")
+        print()
+        print("  To fix, try ONE of:")
+        print("    1. Add ETSY_API_KEY to .env  (most reliable data source)")
+        print("    2. Wait a few minutes and retry  (Google may be rate-limiting)")
+        print("    3. Use a VPN  (Google blocks some IPs from Trends data)")
+        print("=" * 72 + "\n")
+        if not args.no_csv:
+            csv_file = export_csv(rows)
+            print(f"(Empty results exported to: {csv_file})")
+        return
 
     # Output
     print_table(rows, has_etsy)
