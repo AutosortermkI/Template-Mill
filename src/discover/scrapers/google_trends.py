@@ -1,6 +1,7 @@
 """Google Trends wrapper using pytrends with rate limiting and retry logic."""
 
 import asyncio
+from typing import TypedDict
 
 from pytrends.request import TrendReq
 
@@ -8,6 +9,13 @@ from src.shared.exceptions import RateLimitError
 from src.shared.logger import get_logger
 
 logger = get_logger("google_trends")
+
+
+class TrendData(TypedDict):
+    """Per-keyword trend data returned by the scraper."""
+
+    momentum: float  # recent / overall average (>1 = rising, <1 = declining)
+    interest: int  # average interest level (0-100, normalized within batch)
 
 
 def _chunk(lst: list, size: int) -> list[list]:
@@ -21,20 +29,24 @@ class GoogleTrendsScraper:
     def __init__(self) -> None:
         self.pytrends = TrendReq(hl="en-US", tz=300, retries=3, backoff_factor=2)
 
-    async def get_momentum(self, keywords: list[str], geo: str = "US") -> dict[str, float]:
-        """Calculate trend momentum for each keyword.
+    async def get_momentum(self, keywords: list[str], geo: str = "US") -> dict[str, TrendData]:
+        """Calculate trend momentum and interest level for each keyword.
 
         Momentum = average interest over last ~30 days / overall average.
         A value > 1.0 indicates rising interest, < 1.0 indicates declining.
+        Interest = average interest level over the past 12 months (0-100).
+
+        Note: Interest values are normalized within each batch of 5 keywords,
+        so they are most meaningful for relative comparison within a batch.
 
         Args:
             keywords: List of keywords to analyze (batched in groups of 5).
             geo: Geographic region code.
 
         Returns:
-            Dict mapping keyword to momentum ratio.
+            Dict mapping keyword to TrendData with momentum and interest.
         """
-        results: dict[str, float] = {}
+        results: dict[str, TrendData] = {}
 
         for batch in _chunk(keywords, 5):
             try:
@@ -42,13 +54,22 @@ class GoogleTrendsScraper:
                 self.pytrends.build_payload(batch, timeframe="today 12-m", geo=geo)
                 df = self.pytrends.interest_over_time()
 
+                if df.empty:
+                    logger.warning("google_trends_empty_response", batch=batch)
+                    for kw in batch:
+                        results[kw] = TrendData(momentum=0.0, interest=0)
+                    continue
+
                 for kw in batch:
                     if kw in df.columns:
                         recent = df[kw].tail(4).mean()
                         overall = df[kw].mean()
-                        results[kw] = round(recent / max(overall, 1), 2)
+                        results[kw] = TrendData(
+                            momentum=round(recent / max(overall, 1), 2),
+                            interest=round(overall),
+                        )
                     else:
-                        results[kw] = 0.0
+                        results[kw] = TrendData(momentum=0.0, interest=0)
 
                 logger.info("google_trends_batch_complete", results_count=len(batch))
 
@@ -59,7 +80,7 @@ class GoogleTrendsScraper:
                     raise RateLimitError(f"Google Trends rate limit hit: {e}") from e
                 logger.error("google_trends_error", batch=batch, error=str(e))
                 for kw in batch:
-                    results[kw] = 0.0
+                    results[kw] = TrendData(momentum=0.0, interest=0)
 
             # Rate limit: 10 second delay between batches
             await asyncio.sleep(10)

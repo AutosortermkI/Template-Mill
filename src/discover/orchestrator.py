@@ -63,18 +63,20 @@ class DiscoverOrchestrator:
             except Exception as e:
                 logger.error("etsy_scrape_failed", keyword=kw["term"], error=str(e))
 
-        # Step 2: Gather Google Trends momentum
+        # Step 2: Gather Google Trends momentum + interest
         terms = [kw["term"] for kw in keywords]
         try:
-            momentum = await self.google_trends.get_momentum(terms)
+            trend_data = await self.google_trends.get_momentum(terms)
         except Exception as e:
             logger.error("google_trends_failed", error=str(e))
-            momentum = {}
+            trend_data = {}
 
         # Step 3: Score opportunities and persist signals
         for kw in keywords:
             etsy = etsy_signals.get(kw["id"], {})
-            google_mom = momentum.get(kw["term"], 1.0)
+            kw_trend = trend_data.get(kw["term"], {"momentum": 1.0, "interest": 0})
+            google_mom = kw_trend["momentum"]
+            google_interest = kw_trend["interest"]
 
             search_volume = etsy.get("listing_count", 0) * 10
             competition = etsy.get("listing_count", 0)
@@ -89,6 +91,7 @@ class DiscoverOrchestrator:
                 etsy_avg_price=avg_price,
                 etsy_avg_reviews=avg_reviews,
                 google_momentum=google_mom,
+                google_interest=google_interest,
             )
 
             # Persist the raw demand signal
@@ -103,6 +106,7 @@ class DiscoverOrchestrator:
                         "etsy_avg_price": avg_price,
                         "etsy_avg_reviews": avg_reviews,
                         "google_momentum": google_mom,
+                        "google_interest": google_interest,
                     },
                     session=self._session,
                 )

@@ -21,8 +21,8 @@ async def main() -> None:
         logger.info("no_keywords_to_backfill")
         return
 
-    momentum = await scraper.get_momentum(keywords)
-    logger.info("backfill_complete", keyword_count=len(momentum))
+    trend_data = await scraper.get_momentum(keywords)
+    logger.info("backfill_complete", keyword_count=len(trend_data))
 
     # TODO: Store results in demand_signals table
 

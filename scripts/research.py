@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.discover.analyzers.opportunity_scorer import score_opportunity
 from src.discover.models import DemandSignalAggregate
-from src.discover.scrapers.google_trends import GoogleTrendsScraper
+from src.discover.scrapers.google_trends import GoogleTrendsScraper, TrendData
 from src.shared.config import settings
 
 # ── Seed keywords ────────────────────────────────────────────────────────────
@@ -57,6 +57,8 @@ SEED_KEYWORDS = [
     {"term": "social media planner", "category": "planner"},
 ]
 
+_EMPTY_TREND = TrendData(momentum=0.0, interest=0)
+
 
 async def fetch_etsy_stats(keywords: list[dict]) -> dict[str, dict]:
     """Fetch Etsy competition stats for each keyword."""
@@ -80,23 +82,31 @@ async def fetch_etsy_stats(keywords: list[dict]) -> dict[str, dict]:
     return results
 
 
-async def fetch_trends(keywords: list[dict]) -> dict[str, float]:
-    """Fetch Google Trends momentum for each keyword."""
+async def fetch_trends(keywords: list[dict]) -> dict[str, TrendData]:
+    """Fetch Google Trends momentum and interest for each keyword."""
     terms = [kw["term"] for kw in keywords]
     print(f"  Fetching Google Trends for {len(terms)} keywords (batches of 5, ~10s between)...")
     try:
         scraper = GoogleTrendsScraper()
-        momentum = await scraper.get_momentum(terms)
-        return momentum
+        trend_data = await scraper.get_momentum(terms)
+
+        # Check if we got any real data
+        has_real_data = any(td["interest"] > 0 or td["momentum"] > 0 for td in trend_data.values())
+        if not has_real_data:
+            print("\n  WARNING: Google Trends returned no usable data for any keyword.")
+            print("  This usually means pytrends is being rate-limited or blocked.")
+            print("  Try again in a few minutes, or use a VPN.\n")
+
+        return trend_data
     except Exception as e:
         print(f"\n  WARNING: Google Trends failed ({type(e).__name__}: {e})")
         print("  Continuing without trend data...\n")
-        return {kw["term"]: 0.0 for kw in keywords}
+        return {kw["term"]: _EMPTY_TREND for kw in keywords}
 
 
 def build_results(
     keywords: list[dict],
-    trends: dict[str, float],
+    trends: dict[str, TrendData],
     etsy: dict[str, dict] | None,
 ) -> list[dict]:
     """Score each keyword and return sorted results."""
@@ -104,7 +114,9 @@ def build_results(
 
     for kw in keywords:
         term = kw["term"]
-        momentum = trends.get(term, 0.0)
+        trend_data = trends.get(term, _EMPTY_TREND)
+        momentum = trend_data["momentum"]
+        interest = trend_data["interest"]
 
         etsy_data = (etsy or {}).get(term, {})
         listing_count = etsy_data.get("listing_count", 0)
@@ -122,6 +134,7 @@ def build_results(
             etsy_avg_price=avg_price,
             etsy_avg_reviews=avg_reviews,
             google_momentum=momentum,
+            google_interest=interest,
         )
 
         score = score_opportunity(aggregate)
@@ -130,10 +143,9 @@ def build_results(
             "keyword": term,
             "category": kw["category"],
             "score": score.total,
-            "revenue": score.revenue_potential,
-            "competition": score.competition_difficulty,
-            "trend": score.trend_momentum,
+            "interest": interest,
             "momentum": momentum,
+            "trend": score.trend_momentum,
             "listings": listing_count,
             "avg_price": avg_price,
             "avg_reviews": avg_reviews,
@@ -150,25 +162,43 @@ def print_table(rows: list[dict], has_etsy: bool) -> None:
     print("=" * 100)
 
     if has_etsy:
-        header = f"{'Rank':<5} {'Keyword':<28} {'Score':>6} {'Revenue':>8} {'Compet.':>8} {'Trend':>6} {'Mom.':>5} {'Listings':>8} {'AvgPrice':>9}"
+        header = (
+            f"{'Rank':<5} {'Keyword':<28} {'Score':>6} {'Interest':>8} "
+            f"{'Mom.':>5} {'Trend':>6} {'Listings':>8} {'AvgPrice':>9}"
+        )
         print(header)
         print("-" * 100)
         for i, r in enumerate(rows, 1):
             flag = " **" if r["score"] >= 50 else ""
             print(
-                f"{i:<5} {r['keyword']:<28} {r['score']:>6.1f} {r['revenue']:>8.1f} {r['competition']:>8.1f} "
-                f"{r['trend']:>6.1f} {r['momentum']:>5.2f} {r['listings']:>8} {r['avg_price']:>8.2f}{flag}"
+                f"{i:<5} {r['keyword']:<28} {r['score']:>6.1f} {r['interest']:>8} "
+                f"{r['momentum']:>5.2f} {r['trend']:>6.1f} {r['listings']:>8} "
+                f"{r['avg_price']:>8.2f}{flag}"
             )
     else:
-        header = f"{'Rank':<5} {'Keyword':<28} {'Score':>6} {'Trend':>6} {'Momentum':>9}"
+        header = f"{'Rank':<5} {'Keyword':<28} {'Score':>6} {'Interest':>8} {'Momentum':>9} {'Direction':>10}"
         print(header)
-        print("-" * 60)
+        print("-" * 72)
         for i, r in enumerate(rows, 1):
-            flag = " **" if r["momentum"] >= 1.2 else ""
-            print(f"{i:<5} {r['keyword']:<28} {r['score']:>6.1f} {r['trend']:>6.1f} {r['momentum']:>9.2f}{flag}")
+            if r["momentum"] >= 1.2:
+                direction = "RISING **"
+            elif r["momentum"] >= 0.8:
+                direction = "stable"
+            elif r["momentum"] > 0:
+                direction = "declining"
+            else:
+                direction = "—"
+            print(
+                f"{i:<5} {r['keyword']:<28} {r['score']:>6.1f} {r['interest']:>8} "
+                f"{r['momentum']:>9.2f} {direction:>10}"
+            )
 
     print()
-    print("** = high opportunity" if has_etsy else "** = rising momentum (>1.2)")
+    if has_etsy:
+        print("** = high opportunity (score >= 50)")
+    else:
+        print("** = rising momentum (>1.2)")
+        print("Interest = avg Google search interest (0-100, relative within batches of 5)")
     print()
 
 
@@ -201,11 +231,11 @@ async def main() -> None:
     # Fetch data
     print(f"\nResearching {len(keywords)} keywords...\n")
 
-    trends: dict[str, float] = {}
+    trends: dict[str, TrendData] = {}
     if has_trends:
         trends = await fetch_trends(keywords)
     else:
-        trends = {kw["term"]: 0.0 for kw in keywords}
+        trends = {kw["term"]: _EMPTY_TREND for kw in keywords}
 
     etsy = None
     if has_etsy:
@@ -214,6 +244,13 @@ async def main() -> None:
 
     # Score and rank
     rows = build_results(keywords, trends, etsy)
+
+    # Check if results are meaningful
+    scores = [r["score"] for r in rows]
+    if len(set(scores)) == 1:
+        print("\n  WARNING: All keywords scored identically — no data source returned")
+        print("  usable data. Results below are not actionable.\n")
+        print("  To fix: add ETSY_API_KEY to .env, or retry Google Trends later.\n")
 
     # Output
     print_table(rows, has_etsy)
