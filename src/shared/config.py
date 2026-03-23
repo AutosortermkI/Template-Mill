@@ -13,8 +13,8 @@ class Settings(BaseSettings):
 
     # API Keys
     ANTHROPIC_API_KEY: str = ""
-    ETSY_API_KEY: str = ""
-    ETSY_SHARED_SECRET: str = ""
+    ETSY_API_KEY: str = "ul017toskhnfcfij7pr96uab"
+    ETSY_SHARED_SECRET: str = "70vpmszkd1"
     ETSY_ACCESS_TOKEN: str = ""
     ETSY_REFRESH_TOKEN: str = ""
     PINTEREST_ACCESS_TOKEN: str = ""
