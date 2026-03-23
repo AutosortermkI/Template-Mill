@@ -185,11 +185,16 @@ def print_table(rows: list[dict], has_etsy: bool) -> None:
                 f"{r['avg_price']:>8.2f}{flag}"
             )
     else:
-        header = f"{'Rank':<5} {'Keyword':<28} {'Score':>6} {'Interest':>8} {'Momentum':>9} {'Direction':>10}"
+        header = (
+            f"{'Rank':<5} {'Keyword':<28} {'Score':>6} "
+            f"{'Interest':>8} {'Momentum':>9} {'Direction':>10}"
+        )
         print(header)
         print("-" * 72)
         for i, r in enumerate(rows, 1):
-            if r["momentum"] >= 1.2:
+            if r["interest"] == 0 and r["momentum"] == 0:
+                direction = "no data"
+            elif r["momentum"] >= 1.2:
                 direction = "RISING **"
             elif r["momentum"] >= 0.8:
                 direction = "stable"
@@ -198,8 +203,8 @@ def print_table(rows: list[dict], has_etsy: bool) -> None:
             else:
                 direction = "—"
             print(
-                f"{i:<5} {r['keyword']:<28} {r['score']:>6.1f} {r['interest']:>8} "
-                f"{r['momentum']:>9.2f} {direction:>10}"
+                f"{i:<5} {r['keyword']:<28} {r['score']:>6.1f} "
+                f"{r['interest']:>8} {r['momentum']:>9.2f} {direction:>10}"
             )
 
     print()

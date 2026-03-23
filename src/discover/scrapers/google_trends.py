@@ -2,11 +2,28 @@
 
 import asyncio
 from typing import TypedDict
-
-from pytrends.request import TrendReq
+from urllib3.util.retry import Retry
 
 from src.shared.exceptions import RateLimitError
 from src.shared.logger import get_logger
+
+# ── Compatibility shim ──────────────────────────────────────────────────────
+# pytrends 4.9.x passes the deprecated `method_whitelist` kwarg to
+# urllib3.util.retry.Retry.  That parameter was removed in urllib3 2.0
+# (replaced by `allowed_methods`).  We monkey-patch the constructor so the
+# call succeeds regardless of the urllib3 version installed.
+_original_retry_init = Retry.__init__
+
+
+def _patched_retry_init(self, *args, **kwargs):
+    if "method_whitelist" in kwargs:
+        kwargs["allowed_methods"] = kwargs.pop("method_whitelist")
+    return _original_retry_init(self, *args, **kwargs)
+
+
+Retry.__init__ = _patched_retry_init  # type: ignore[assignment]
+
+from pytrends.request import TrendReq  # noqa: E402  (must import after patch)
 
 logger = get_logger("google_trends")
 
